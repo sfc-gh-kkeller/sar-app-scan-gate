@@ -171,7 +171,7 @@ Run the tests:
 
 ```bash
 uv venv .venv && uv pip install --python .venv/bin/python "semgrep==1.180.0" pyyaml
-PATH=$PWD/.venv/bin:$PATH python tests/make_fixtures.py && python tests/run_tests.py
+PATH=$PWD/.venv/bin:$PATH python tests/run_tests.py   # regenerates tests/fixtures first
 docker build --platform linux/amd64 -f scanner/Dockerfile -t sar-gate-scanner:test . && tests/test_job_image.sh
 ```
 

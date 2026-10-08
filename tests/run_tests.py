@@ -43,6 +43,8 @@ def rewrite_roundtrip(name, path, res):
 
 
 def main():
+    # Fixtures are generated (the fake .env one is gitignored on purpose), so always rebuild them.
+    subprocess.run([sys.executable, os.path.join(HERE, "make_fixtures.py")], check=True)
     verbose = "-v" in sys.argv
     fails = 0
     for name, path in fixtures():
