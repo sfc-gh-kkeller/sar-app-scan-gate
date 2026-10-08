@@ -75,19 +75,37 @@ def finding(rule, cls, path, line, message, rewrite=None, **extra):
 
 
 def run_semgrep(app):
+    """Scan a throwaway copy with NO effective ignore rules.
+
+    Semgrep applies built-in default ignores (e.g. tests/) and honours .semgrepignore files
+    inside the target. Both let an app hide code from the gate, so the copy gets every
+    .semgrepignore removed and an empty one at its root. Size limits are disabled too.
+    """
+    import shutil
+    import tempfile
     exclude = []
     for d in SKIP_DIRS:
         exclude += ["--exclude", d]
+    tmp = tempfile.mkdtemp(prefix="gate-semgrep-")
+    copy = os.path.join(tmp, "app")
+    shutil.copytree(app, copy, symlinks=True, ignore=shutil.ignore_patterns(*SKIP_DIRS))
+    for root, _, files in os.walk(copy):
+        for f in files:
+            if f == ".semgrepignore":
+                os.remove(os.path.join(root, f))
+    open(os.path.join(copy, ".semgrepignore"), "w").close()
     cmd = [SEMGREP, "scan", "--config", RULES, "--json", "--metrics=off", "--disable-version-check",
-           "--no-git-ignore", "--quiet", "--timeout", "30"] + exclude + [app]
-    p = subprocess.run(cmd, capture_output=True, text=True)
+           "--no-git-ignore", "--quiet", "--timeout", "30", "--max-target-bytes", "0"] + exclude + ["."]
+    p = subprocess.run(cmd, capture_output=True, text=True, cwd=copy)
+    shutil.rmtree(tmp, ignore_errors=True)
     if p.returncode not in (0, 1):
         raise RuntimeError(f"semgrep failed ({p.returncode}): {p.stderr[-2000:]}")
     data = json.loads(p.stdout)
+    # result paths are relative to the copy root, i.e. relative to the app
     out = []
     for r in data.get("results", []):
         meta = r["extra"].get("metadata", {})
-        rel = os.path.relpath(r["path"], app).replace(os.sep, "/")
+        rel = os.path.normpath(r["path"]).replace(os.sep, "/")
         out.append(finding(
             r["check_id"].split(".")[-1], meta.get("gate_class", "REFUSE"), rel,
             r["start"]["line"], r["extra"]["message"], meta.get("rewrite"),
@@ -153,6 +171,10 @@ def manifest_checks(app, allowed_eai, allowed_build_eai):
 def secret_checks(app):
     out = []
     for rel, full in walk(app):
+        if os.path.basename(rel) == ".semgrepignore":
+            out.append(finding("scanner-ignore-file", "WARN", rel, 0,
+                               "App ships a .semgrepignore. The gate ignores it, but it only makes sense as an "
+                               "attempt to hide files from scanning."))
         if SECRET_FILES.search(rel) and os.path.getsize(full) > 0:
             out.append(finding("secret-file", "REFUSE", rel, 0, "Credential-type file in the upload tree."))
             continue

