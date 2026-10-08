@@ -1,0 +1,194 @@
+# Client-side rules: what the SPCS/SAR ingress CSP does NOT stop.
+# Measured baseline: default-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data:;
+#                    connect-src 'self'; no form-action; navigation not governed.
+# metadata.gate_class: REFUSE (block) | REWRITE (safe auto-fix, then rescan) | WARN (human, blocks auto-publish)
+rules:
+  - id: client-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "eval-style code execution. Baseline CSP allows 'unsafe-eval', so this runs."
+    metadata: {gate_class: REFUSE}
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: setTimeout("...", ...)
+      - pattern: setInterval("...", ...)
+
+  - id: client-document-write
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "document.write is an HTML injection sink."
+    metadata: {gate_class: REFUSE}
+    pattern-either:
+      - pattern: document.write(...)
+      - pattern: document.writeln(...)
+
+  - id: client-html-sink
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Dynamic HTML assignment. Inline script/handlers in it run under the baseline CSP ('unsafe-inline')."
+    metadata: {gate_class: REFUSE}
+    patterns:
+      - pattern-either:
+          - pattern: $E.innerHTML = $V
+          - pattern: $E.outerHTML = $V
+          - pattern: $E.insertAdjacentHTML($P, $V)
+      - pattern-not: $E.innerHTML = "..."
+      - pattern-not: $E.innerHTML = ""
+
+  - id: client-react-dangerous-html
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "dangerouslySetInnerHTML renders raw HTML; inline script runs under the baseline CSP."
+    metadata: {gate_class: REFUSE}
+    pattern-regex: 'dangerouslySetInnerHTML'
+
+  - id: client-form-action
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Form action set from code. form-action is not in the SPCS CSP, so a POST can leave to any host (measured 50KB)."
+    metadata: {gate_class: REFUSE}
+    patterns:
+      - pattern-either:
+          - pattern: $F.action = $V
+          - pattern: $F.setAttribute("action", $V)
+          - pattern: $F.formAction = $V
+      - pattern-not: $F.action = "=~/^\/(?!\/)/"
+      - pattern-not: $F.action = ""
+
+  - id: client-external-navigation
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Navigation to a computed or external URL. Navigation is not covered by CSP; ~8KB of query string can carry data out."
+    metadata: {gate_class: REFUSE}
+    patterns:
+      - pattern-either:
+          - pattern: location.href = $U
+          - pattern: window.location.href = $U
+          - pattern: window.location = $U
+          - pattern: location.assign($U)
+          - pattern: location.replace($U)
+          - pattern: window.location.assign($U)
+          - pattern: window.location.replace($U)
+          - pattern: window.open($U, ...)
+      - pattern-not: location.href = "=~/^\/(?!\/)/"
+      - pattern-not: window.location.href = "=~/^\/(?!\/)/"
+      - pattern-not: window.location = "=~/^\/(?!\/)/"
+      - pattern-not: location.assign("=~/^\/(?!\/)/")
+      - pattern-not: location.replace("=~/^\/(?!\/)/")
+      - pattern-not: window.open("=~/^\/(?!\/)/", ...)
+
+  - id: client-foreign-connect
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Connection to an absolute URL. Blocked by connect-src 'self' today, but any runtime EAI widens the browser CSP to that host."
+    metadata: {gate_class: REFUSE}
+    pattern-either:
+      - pattern: fetch("=~/^(https?|wss?):\/\//", ...)
+      - pattern: new WebSocket("=~/^wss?:\/\//", ...)
+      - pattern: new EventSource("=~/^https?:\/\//", ...)
+      - pattern: $X.open($M, "=~/^https?:\/\//", ...)
+      - pattern: axios.$VERB("=~/^https?:\/\//", ...)
+      - pattern: axios("=~/^https?:\/\//", ...)
+
+  - id: client-send-beacon
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "sendBeacon is a classic exfil/tracking call; removed automatically."
+    metadata: {gate_class: REWRITE, rewrite: delete-statement}
+    pattern: navigator.sendBeacon(...)
+
+  - id: client-tracking-pixel
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Image beacon to an absolute URL; removed automatically."
+    metadata: {gate_class: REWRITE, rewrite: delete-statement}
+    pattern-either:
+      - pattern: (new Image()).src = "=~/^https?:\/\//"
+      - pattern: $I.src = "=~/^https?:\/\/.*[?&]/"
+
+  - id: client-webrtc
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "WebRTC is outside connect-src; data channels can leave the cage."
+    metadata: {gate_class: REFUSE}
+    pattern-either:
+      - pattern: new RTCPeerConnection(...)
+      - pattern: new webkitRTCPeerConnection(...)
+      - pattern: $P.createDataChannel(...)
+
+  - id: client-cookie-domain
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Cookie with Domain= is shared with every *.snowflakecomputing.app host (not on the PSL); the Domain attribute is stripped."
+    metadata: {gate_class: REWRITE, rewrite: strip-cookie-domain}
+    patterns:
+      - pattern: document.cookie = $V
+      - metavariable-regex:
+          metavariable: $V
+          regex: '(?i).*domain\s*='
+
+  # ---- Markup (HTML, JSX/TSX, Vue, Svelte templates) ----------------------
+  - id: html-inline-script
+    languages: [generic]
+    paths: {include: ["*.html", "*.htm", "*.vue", "*.svelte"]}
+    severity: ERROR
+    message: "Inline <script>. Baseline CSP allows 'unsafe-inline', so injected or inline script runs."
+    metadata: {gate_class: REFUSE}
+    pattern-regex: '(?i)<script(?![^>]*\bsrc\s*=)(?![^>]*type\s*=\s*["'']?(application/(ld\+)?json|importmap))[^>]*>\s*\S'
+
+  - id: html-inline-handler
+    languages: [generic]
+    paths: {include: ["*.html", "*.htm"]}
+    severity: ERROR
+    message: "Inline event handler attribute (on*=). Runs under 'unsafe-inline'."
+    metadata: {gate_class: REFUSE}
+    pattern-regex: '(?i)<[a-z][^>]*\son[a-z]+\s*=\s*["''][^"'']*["'']'
+
+  - id: html-javascript-url
+    languages: [generic]
+    paths: {include: ["*.html", "*.htm", "*.vue", "*.svelte", "*.jsx", "*.tsx"]}
+    severity: ERROR
+    message: "javascript: URL."
+    metadata: {gate_class: REFUSE}
+    pattern-regex: '(?i)(href|src|action)\s*=\s*\{?\s*["'']\s*javascript:'
+
+  - id: html-vue-v-html
+    languages: [generic]
+    paths: {include: ["*.vue"]}
+    severity: ERROR
+    message: "v-html renders raw HTML."
+    metadata: {gate_class: REFUSE}
+    pattern-regex: '\bv-html\s*='
+
+  - id: html-svelte-raw
+    languages: [generic]
+    paths: {include: ["*.svelte"]}
+    severity: ERROR
+    message: "{@html ...} renders raw HTML."
+    metadata: {gate_class: REFUSE}
+    pattern-regex: '\{@html\b'
+
+  - id: html-external-form
+    languages: [generic]
+    paths: {include: ["*.html", "*.htm", "*.vue", "*.svelte", "*.jsx", "*.tsx"]}
+    severity: ERROR
+    message: "<form action> to an external host. form-action is not in the SPCS CSP; the POST leaves the signed-in tab."
+    metadata: {gate_class: REFUSE}
+    pattern-regex: '(?i)<form[^>]*\baction\s*=\s*\{?\s*["'']https?://'
+
+  - id: html-external-script
+    languages: [generic]
+    paths: {include: ["*.html", "*.htm", "*.vue", "*.svelte", "*.jsx", "*.tsx"]}
+    severity: WARNING
+    message: "External <script src>. Blocked by CSP today, but becomes live if an EAI widens it; removed automatically."
+    metadata: {gate_class: REWRITE, rewrite: delete-tag}
+    pattern-regex: '(?i)<script[^>]*\bsrc\s*=\s*\{?\s*["''](https?:)?//[^"'']+["''][^>]*>\s*</script>'
+
+  - id: html-external-pixel
+    languages: [generic]
+    paths: {include: ["*.html", "*.htm", "*.vue", "*.svelte", "*.jsx", "*.tsx"]}
+    severity: WARNING
+    message: "Image from an absolute URL with a query string (tracking pixel shape); removed automatically."
+    metadata: {gate_class: REWRITE, rewrite: delete-tag}
+    pattern-regex: '(?i)<img[^>]*\bsrc\s*=\s*\{?\s*["'']https?://[^"'']*\?[^"'']*["''][^>]*/?>'

@@ -1,0 +1,147 @@
+# Server-side rules (Node + Python in the same app tree).
+rules:
+  - id: server-reflected-xss
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Request input written into the response without encoding (reflected XSS). Ran under the SPCS baseline CSP."
+    metadata: {gate_class: REFUSE}
+    mode: taint
+    pattern-sources:
+      - pattern: $REQ.query
+      - pattern: $REQ.params
+      - pattern: $REQ.body
+      - pattern: $REQ.url
+      - pattern: $U.searchParams.get(...)
+    pattern-sanitizers:
+      - pattern: encodeURIComponent(...)
+      - pattern: escape(...)
+      - pattern: escapeHtml(...)
+      - pattern: he.encode(...)
+      - pattern: JSON.stringify(...)
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+    pattern-sinks:
+      - pattern: $RES.send(...)
+      - pattern: $RES.end(...)
+      - pattern: $RES.write(...)
+
+  - id: server-child-process
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Spawning processes from the app (shells, miners, reverse shells)."
+    metadata: {gate_class: REFUSE}
+    pattern-either:
+      - pattern: require("child_process")
+      - pattern: require("node:child_process")
+      - pattern-regex: 'from\s+["''](node:)?child_process["'']'
+
+  - id: server-python-subprocess
+    languages: [python]
+    severity: ERROR
+    message: "Spawning processes from the app."
+    metadata: {gate_class: REFUSE}
+    pattern-either:
+      - pattern: subprocess.$F(...)
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+
+  - id: server-outbound-http-node
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Server-side request to a hard-coded external host. Only real if an EAI is attached, which the gate also refuses."
+    metadata: {gate_class: REFUSE}
+    pattern-either:
+      - pattern: http.request("=~/^https?:\/\//", ...)
+      - pattern: https.request("=~/^https?:\/\//", ...)
+      - pattern: http.get("=~/^https?:\/\//", ...)
+      - pattern: https.get("=~/^https?:\/\//", ...)
+
+  - id: server-outbound-http-python
+    languages: [python]
+    severity: ERROR
+    message: "Server-side request to a hard-coded external host."
+    metadata: {gate_class: REFUSE}
+    pattern-either:
+      - pattern: requests.$VERB("=~/^https?:\/\//", ...)
+      - pattern: urllib.request.urlopen("=~/^https?:\/\//", ...)
+      - pattern: httpx.$VERB("=~/^https?:\/\//", ...)
+
+  - id: server-log-caller-token
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Logs request headers or the caller token (sf-context-current-user-token). Event-table readers would get a usable token; the log line is removed."
+    metadata: {gate_class: REWRITE, rewrite: delete-statement}
+    pattern-either:
+      - pattern: console.$LOG(..., $REQ.headers, ...)
+      - pattern: console.$LOG(..., $REQ.headers[$H], ...)
+      - pattern: console.$LOG(..., "=~/sf-context-current-user-token/i", ...)
+      - pattern: console.$LOG(..., $REQ.get("=~/sf-context/i"), ...)
+
+  - id: server-log-rows
+    languages: [javascript, typescript]
+    severity: INFO
+    message: "Possibly logging query results; event table is readable by MONITOR roles."
+    metadata: {gate_class: WARN}
+    pattern-regex: 'console\.(log|info|debug)\([^)]*\b(rows|result|results|data)\b'
+
+  - id: server-cors-reflect
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "CORS reflects the request Origin. The proxy does not strip app CORS headers."
+    metadata: {gate_class: REFUSE}
+    pattern-either:
+      - pattern: $RES.setHeader("Access-Control-Allow-Origin", $REQ.headers.origin)
+      - pattern: $RES.header("Access-Control-Allow-Origin", $REQ.headers.origin)
+      - pattern: $RES.set("Access-Control-Allow-Origin", $REQ.headers.origin)
+      - pattern: 'cors({origin: true, ...})'
+
+  - id: server-cors-wildcard
+    languages: [javascript, typescript]
+    severity: INFO
+    message: "Wildcard CORS from the app. CORS is app-controlled behind the SPCS proxy."
+    metadata: {gate_class: WARN}
+    pattern-regex: 'Access-Control-Allow-Origin["'']\s*,\s*["'']\*'
+
+  - id: server-cookie-domain
+    languages: [javascript, typescript, python]
+    severity: WARNING
+    message: "Set-Cookie with Domain= reaches every *.snowflakecomputing.app host; the Domain attribute is stripped."
+    metadata: {gate_class: REWRITE, rewrite: strip-cookie-domain}
+    pattern-regex: '(?i)(set-cookie["''][^\n]*;\s*domain=|\bdomain\s*:\s*["'']\.?[a-z0-9.-]*snowflake(computing)?\.app["''])'
+
+  - id: server-external-redirect
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Redirect to an external URL. CSP does not govern navigation; data in the query string leaves."
+    metadata: {gate_class: REFUSE}
+    pattern-either:
+      - pattern: $RES.redirect("=~/^https?:\/\//")
+      - pattern: $RES.redirect($CODE, "=~/^https?:\/\//")
+      - pattern: '$RES.writeHead($CODE, {..., Location: "=~/^https?:\/\//", ...})'
+      - pattern: '$RES.setHeader("Location", "=~/^https?:\/\//")'
+
+  - id: server-dynamic-redirect
+    languages: [javascript, typescript]
+    severity: INFO
+    message: "Redirect target computed at runtime (open redirect / exfil)."
+    metadata: {gate_class: WARN}
+    patterns:
+      - pattern-either:
+          - pattern: $RES.redirect($U)
+          - pattern: '$RES.setHeader("Location", $U)'
+      - pattern-not: $RES.redirect("...")
+      - pattern-not: '$RES.setHeader("Location", "...")'
+
+  - id: server-global-state
+    languages: [javascript, typescript]
+    severity: INFO
+    message: "Module/global state. One container serves all users; results cached here can leak across callers."
+    metadata: {gate_class: WARN}
+    pattern-regex: '\b(global|globalThis)\.[A-Za-z_]\w*\s*=(?!=)'
+
+  - id: server-sql-egress
+    languages: [javascript, typescript, python]
+    severity: INFO
+    message: "SQL that writes data to a stage or external location. SQL egress is always available to the app's role."
+    metadata: {gate_class: WARN}
+    pattern-regex: '(?i)\b(COPY\s+INTO\s+''?@|PUT\s+file:|CREATE\s+(OR\s+REPLACE\s+)?EXTERNAL\s+FUNCTION)'

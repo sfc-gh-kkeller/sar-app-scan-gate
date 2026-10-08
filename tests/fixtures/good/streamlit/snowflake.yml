@@ -1,0 +1,7 @@
+definition_version: 2
+entities:
+  app:
+    type: streamlit
+    identifier: {name: GOOD_ST}
+    query_warehouse: APP_WH
+    main_file: streamlit_app.py

@@ -1,0 +1,9 @@
+version: 2
+name: GOOD_EXPRESS
+query_warehouse: APP_WH
+default_target: preview
+targets:
+  preview: {database: USER$, schema: PUBLIC}
+  prod: {database: APPS, schema: PROD}
+run:
+  command: ["node", "server.js"]

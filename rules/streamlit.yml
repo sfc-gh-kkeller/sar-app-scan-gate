@@ -1,0 +1,49 @@
+# Streamlit (SiS) rules. Same ingress, different source shape.
+rules:
+  - id: st-unsafe-html
+    languages: [python]
+    severity: WARNING
+    message: "unsafe_allow_html=True renders raw HTML; flipped to False automatically."
+    metadata: {gate_class: REWRITE, rewrite: st-unsafe-html-false}
+    pattern-either:
+      - pattern: st.markdown(..., unsafe_allow_html=True, ...)
+      - pattern: st.write(..., unsafe_allow_html=True, ...)
+      - pattern: st.caption(..., unsafe_allow_html=True, ...)
+
+  - id: st-raw-html
+    languages: [python]
+    severity: INFO
+    message: "st.html / components.html injects raw HTML/JS into the page. Needs human review."
+    metadata: {gate_class: WARN}
+    pattern-either:
+      - pattern: st.html(...)
+      - pattern: components.html(...)
+      - pattern: st.components.v1.html(...)
+      - pattern: stc.html(...)
+
+  - id: st-components-v2
+    languages: [python]
+    severity: INFO
+    message: "Custom component with its own JS (st.components.v2). Its JS/HTML is scanned with the client rules; human review."
+    metadata: {gate_class: WARN}
+    pattern-either:
+      - pattern: st.components.v2.component(...)
+      - pattern: components.v2.component(...)
+
+  - id: st-external-link
+    languages: [python]
+    severity: INFO
+    message: "Link to an external URL (navigation channel)."
+    metadata: {gate_class: WARN}
+    pattern-either:
+      - pattern: st.link_button($L, "=~/^https?:\/\//", ...)
+      - pattern: st.page_link("=~/^https?:\/\//", ...)
+
+  - id: st-computed-link
+    languages: [python]
+    severity: ERROR
+    message: "Link button with a computed URL. Data can be carried out in the query string."
+    metadata: {gate_class: REFUSE}
+    patterns:
+      - pattern: st.link_button($L, $U, ...)
+      - pattern-not: st.link_button($L, "...", ...)

@@ -1,0 +1,14 @@
+version: 2
+name: GATE_FORM
+query_warehouse: DEVCONTAINER_WH
+default_target: preview
+targets:
+  preview: {database: USER$, schema: PUBLIC}
+install:
+  commands:
+    - ["npm", "install", "--no-audit", "--no-fund"]
+build:
+  commands:
+    - ["npm", "run", "build"]
+run:
+  command: ["node", "server.js"]

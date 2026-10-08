@@ -1,0 +1,10 @@
+version: 2
+name: EAI
+query_warehouse: APP_WH
+default_target: preview
+targets:
+  preview: {database: USER$, schema: PUBLIC}
+  prod: {database: APPS, schema: PROD}
+run:
+  command: ["node", "server.js"]
+external_access_integrations: [OPEN_INTERNET_EAI]
